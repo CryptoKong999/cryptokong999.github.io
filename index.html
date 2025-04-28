@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Поиск товаров</title>
+    <meta charset="UTF-8">
+    <style>
+        /* Стили остаются без изменений */
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f7f7f7;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .search-container {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .search-input {
+            flex-grow: 1;
+            padding: 12px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px 0 0 4px;
+        }
+        .search-button {
+            background-color: #4285F4;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            cursor: pointer;
+            font-size: 16px;
+            border-radius: 0 4px 4px 0;
+        }
+        .search-button:hover {
+            background-color: #357AE8;
+        }
+        .results-container {
+            background-color: white;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 20px;
+            overflow-x: auto; /* Для прокрутки таблицы на малых экранах */
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed; /* Помогает с шириной колонок */
+        }
+        th {
+            background-color: #f2f2f2;
+            padding: 12px;
+            text-align: left;
+            font-weight: bold;
+            border-bottom: 2px solid #ddd;
+        }
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #ddd;
+            word-wrap: break-word; /* Перенос длинных слов */
+        }
+         /* Зададим примерную ширину колонок */
+        th:nth-child(1), td:nth-child(1) { width: 30%; } /* Название */
+        th:nth-child(2), td:nth-child(2) { width: 30%; } /* Вид нанесения */
+        th:nth-child(3), td:nth-child(3) { width: 15%; } /* Цена */
+        th:nth-child(4), td:nth-child(4) { width: 25%; } /* Изображение */
+
+        tr:hover {
+            background-color: #f9f9f9;
+        }
+        .product-image {
+            max-width: 100px; /* Ограничение ширины */
+            max-height: 100px; /* Ограничение высоты */
+            height: auto; /* Позволяет сохранять пропорции при изменении ширины */
+            width: auto;  /* Позволяет сохранять пропорции при изменении высоты */
+            object-fit: contain; /* Масштабирует изображение с сохранением пропорций, чтобы оно поместилось */
+            display: block; /* Убирает лишние отступы под картинкой */
+            margin: 0 auto; /* Центрирует, если картинка меньше ячейки */
+        }
+        .image-cell {
+            text-align: center;
+            vertical-align: middle; /* Вертикальное выравнивание по центру */
+        }
+        .loading, .no-results, .error-message { /* Общие стили */
+            text-align: center;
+            padding: 30px;
+            font-size: 16px;
+            color: #666;
+        }
+        .error-message {
+            background-color: #fdeded;
+            color: #5f2120;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            padding: 16px;
+        }
+        .debug-info {
+            font-family: monospace;
+            max-height: 150px;
+            overflow: auto;
+            background-color: #f5f5f5;
+            padding: 10px;
+            border: 1px solid #ddd;
+            margin-bottom: 10px;
+            white-space: pre-wrap;
+            font-size: 12px;
+        }
+        .excel-button {
+            background-color: #217346; /* Цвет Excel */
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 16px;
+            font-size: 14px;
+            float: right;
+        }
+        .excel-button:hover {
+            background-color: #1a5c38;
+        }
+        .price {
+            font-weight: bold;
+            color: #333;
+            text-align: right; /* Выравнивание цены по правому краю */
+        }
+        th:nth-child(3) { /* Выравнивание заголовка цены */
+             text-align: right;
+        }
+    </style>
+    <!-- Добавляем библиотеку SheetJS для работы с Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+    <h1>Поиск товаров</h1>
+
+    <div class="search-container">
+        <input type="text" id="searchInput" class="search-input" placeholder="Введите название товара, артикул или категорию...">
+        <button id="searchButton" class="search-button">Поиск</button>
+    </div>
+
+    <div id="error" style="display: none;" class="error-message"></div>
+    <div id="debugInfo" style="display: none;" class="debug-info"></div>
+
+    <div id="resultsContainer" class="results-container">
+        <p>Введите поисковый запрос и нажмите кнопку "Поиск"</p>
+    </div>
+
+    <button id="downloadExcel" class="excel-button" style="display: none;">Скачать Excel</button>
+
+    <script>
+        let searchResults = []; // Для хранения ОБРАБОТАННЫХ результатов поиска для Excel
+
+        // --- Элементы DOM ---
+        const searchInput = document.getElementById('searchInput');
+        const searchButton = document.getElementById('searchButton');
+        const downloadExcelButton = document.getElementById('downloadExcel');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const errorContainer = document.getElementById('error');
+        const debugInfo = document.getElementById('debugInfo');
+
+        // --- URL Вебхука (ВАЖНО: Замените на ваш реальный URL!) ---
+        const N8N_WEBHOOK_URL = 'https://robbydoesai.app.n8n.cloud/webhook/0a76b95c-fb59-4d7f-ad8d-13edc8675e33'; // <-- ЗАМЕНИТЕ ЭТО
+
+        // --- Обработчики событий ---
+        searchButton.addEventListener('click', performSearch);
+        searchInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                performSearch();
+            }
+        });
+        downloadExcelButton.addEventListener('click', downloadExcel);
+
+        // Функция для отображения отладочной информации
+        function showDebugInfo(info, title = "Отладочная информация") {
+            let content = title + ":\n";
+            
+            if (typeof info === 'object') {
+                content += JSON.stringify(info, null, 2);
+            } else {
+                content += info;
+            }
+            
+            debugInfo.textContent = content;
+            debugInfo.style.display = 'block';
+        }
+
+        // --- Основная функция поиска ---
+        async function performSearch() {
+            const searchQuery = searchInput.value.trim();
+
+            if (!searchQuery) {
+                resultsContainer.innerHTML = '<p>Пожалуйста, введите поисковый запрос</p>';
+                downloadExcelButton.style.display = 'none';
+                errorContainer.style.display = 'none';
+                debugInfo.style.display = 'none';
+                return;
+            }
+
+            // Сброс состояния перед новым поиском
+            errorContainer.style.display = 'none';
+            debugInfo.style.display = 'none';
+            resultsContainer.innerHTML = '<div class="loading">Выполняется поиск...</div>';
+            downloadExcelButton.style.display = 'none';
+            searchResults = []; // Очищаем предыдущие результаты
+
+            try {
+                // Клонируем запрос для получения сырого текста для отладки
+                const fetchPromise = fetch(N8N_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ query: searchQuery })
+                });
+                
+                // Создаем два промиса: один для получения JSON, другой для сырого текста
+                const response = await fetchPromise;
+                const responseClone = response.clone();
+                
+                // Получаем сырой текст ответа для отладки
+                const rawText = await responseClone.text();
+                showDebugInfo(rawText, "Сырой ответ от сервера");
+                
+                if (!response.ok) {
+                    throw new Error(`Ошибка HTTP: ${response.status} - ${response.statusText}`);
+                }
+                
+                // Пытаемся распарсить ответ как JSON
+                let responseData;
+                try {
+                    responseData = JSON.parse(rawText);
+                    console.log("Ответ после парсинга:", responseData);
+                } catch (parseError) {
+                    console.error("Ошибка при парсинге JSON:", parseError);
+                    throw new Error("Получен некорректный JSON от сервера. Проверьте настройки n8n.");
+                }
+                
+                // САМОЕ ВАЖНОЕ: обработка разных возможных форматов данных
+                let itemsToProcess = [];
+                
+                // Формат 1: { items: [...] }
+                if (responseData && responseData.items && Array.isArray(responseData.items)) {
+                    console.log("Формат: Объект с массивом items");
+                    itemsToProcess = responseData.items;
+                }
+                // Формат 2: [...]
+                else if (Array.isArray(responseData)) {
+                    console.log("Формат: Массив напрямую");
+                    itemsToProcess = responseData;
+                }
+                // Формат 3: [object Object],[object Object],...
+                else if (typeof responseData === 'string' && responseData.includes('[object Object]')) {
+                    console.error("Получена строка с [object Object] вместо JSON!");
+                    
+                    // Пытаемся построить JSON из строки [object Object],[object Object],...
+                    try {
+                        // Заменяем [object Object] на пустые объекты и оборачиваем в массив
+                        const objectString = responseData.replace(/\[object Object\]/g, '{}');
+                        const jsonStr = '[' + objectString + ']';
+                        itemsToProcess = JSON.parse(jsonStr);
+                        console.warn("Преобразовали строку [object Object] в массив пустых объектов");
+                    } catch (e) {
+                        console.error("Не удалось преобразовать строку [object Object] в JSON:", e);
+                        throw new Error("Сервер вернул некорректный формат данных [object Object].");
+                    }
+                }
+                // Формат 4: { поле1: значение1, поле2: значение2, ... }
+                else if (typeof responseData === 'object' && responseData !== null) {
+                    console.log("Формат: Одиночный объект");
+                    
+                    // Проверяем, есть ли в объекте данные товаров
+                    if (responseData["Название продукта"] || 
+                        responseData["Виды нанесения"] || 
+                        responseData["Цена"] || 
+                        responseData["Обложка"]) {
+                        itemsToProcess = [responseData];
+                    } else {
+                        // Если нет прямых полей товаров, считаем все поля отдельными товарами
+                        itemsToProcess = Object.keys(responseData).map(key => {
+                            const value = responseData[key];
+                            if (typeof value === 'object' && value !== null) {
+                                return value; // Предполагаем, что значение уже объект товара
+                            } else {
+                                // Создаем минимальный товар
+                                return { "Название продукта": key, "Цена": value };
+                            }
+                        });
+                    }
+                }
+                // Неизвестный формат
+                else {
+                    console.error("Неизвестный формат данных:", responseData);
+                    throw new Error("Неизвестный формат данных от сервера.");
+                }
+                
+                console.log("Найдено элементов для обработки:", itemsToProcess.length);
+                
+                if (itemsToProcess.length === 0) {
+                    resultsContainer.innerHTML = '<div class="no-results">По вашему запросу ничего не найдено</div>';
+                    return;
+                }
+                
+                // Обрабатываем массив товаров и отображаем их
+                const processedProducts = processReceivedData(itemsToProcess);
+                searchResults = processedProducts;
+                displayResults(processedProducts);
+                downloadExcelButton.style.display = 'block';
+
+            } catch (error) {
+                console.error("Ошибка во время запроса или обработки:", error);
+                errorContainer.textContent = `${error.message}`;
+                errorContainer.style.display = 'block';
+                resultsContainer.innerHTML = '<p>Не удалось загрузить результаты. Проверьте консоль (F12) для деталей.</p>';
+                downloadExcelButton.style.display = 'none';
+            }
+        }
+
+        // --- Функция для извлечения и подготовки данных ---
+        function processReceivedData(data) {
+            console.log(`Обработка ${data.length} элемента(ов)`);
+
+            return data.map((item, index) => {
+                // Логируем КАЖДЫЙ элемент перед обработкой
+                console.log(`Обработка элемента ${index}:`, item);
+
+                // Разбираем поля. Они могут быть в формате fields[...] или напрямую
+                let rawItem = item;
+                if (item.fields && typeof item.fields === 'object') {
+                    rawItem = item.fields;
+                }
+
+                // Пытаемся найти различные варианты названий полей
+                const product_name = 
+                    rawItem["Название продукта"] || 
+                    rawItem["Название"] || 
+                    "Нет названия";
+                
+                const print_types = 
+                    rawItem["Виды нанесения"] || 
+                    rawItem["Вид нанесения"] || 
+                    "Нет данных";
+                
+                const price = 
+                    rawItem["Цена"] || 
+                    "Нет цены";
+                
+                const image_url = 
+                    rawItem["Обложка"] || 
+                    rawItem["Изображение"] || 
+                    "";
+
+                // Возвращаем объект с ключами, которые будут использоваться в таблице и Excel
+                return {
+                    "Название": product_name,
+                    "Вид нанесения": print_types,
+                    "Цена": price,
+                    "Изображение": image_url
+                };
+            });
+        }
+
+        // --- Функция для отображения таблицы ---
+        function displayResults(processedData) {
+            if (!processedData || processedData.length === 0) {
+                resultsContainer.innerHTML = '<div class="no-results">По вашему запросу ничего не найдено</div>';
+                return;
+            }
+
+            // Base64 кодированный SVG для плейсхолдера (простой серый квадрат с текстом "Фото")
+            const placeholderSvgBase64 = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgICA8cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iI2VlZSIvPgogICAgPHRleHQgeD0iNTAlIiB5PSI1MCUiIGRvbWluYW50LWJhc2VsaW5lPSJtaWRkbGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxMiIgZmlsbD0iIzgwODA4MCI+0KTQvtGC0L48L3RleHQ+Cjwvc3ZnPg==';
+
+            // Генерируем строки таблицы
+            const tableRows = processedData.map(item => {
+                const imageUrl = item["Изображение"]; // Получаем URL из обработанных данных
+                // Логируем URL перед созданием строки
+                console.log(`Создание строки для "${item["Название"]}", URL картинки: ${imageUrl}`);
+
+                // Генерируем HTML для ячейки с картинкой
+                const imageCellHtml = imageUrl
+                    ? `<img src="${imageUrl}"
+                           alt="Фото: ${item["Название"] || 'товара'}"
+                           class="product-image"
+                           onerror="this.onerror=null; this.src='${placeholderSvgBase64}';"
+                           loading="lazy">` // loading="lazy" для отложенной загрузки
+                    : 'Нет фото'; // Текст, если URL пустой
+
+                return `
+                    <tr>
+                        <td>${item["Название"]}</td>
+                        <td>${item["Вид нанесения"]}</td>
+                        <td class="price">${item["Цена"]}</td>
+                        <td class="image-cell">${imageCellHtml}</td>
+                    </tr>`;
+            }).join(''); // Объединяем все строки в одну HTML строку
+
+            // Собираем всю таблицу
+            const tableHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Название</th>
+                            <th>Вид нанесения</th>
+                            <th>Цена</th>
+                            <th>Изображение</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tableRows}
+                    </tbody>
+                </table>`;
+
+            resultsContainer.innerHTML = tableHTML;
+        }
+
+        // --- Функция скачивания Excel (XLSX) ---
+        function downloadExcel() {
+            if (!searchResults || searchResults.length === 0) {
+                alert('Нет данных для экспорта');
+                return;
+            }
+
+            try {
+                // Создаем массив для данных Excel
+                const excelData = [];
+                
+                // Добавляем заголовки
+                excelData.push(["Название", "Вид нанесения", "Цена", "Изображение"]);
+                
+                // Добавляем данные
+                searchResults.forEach(item => {
+                    excelData.push([
+                        item["Название"] || "",
+                        item["Вид нанесения"] || "",
+                        item["Цена"] || "",
+                        item["Изображение"] || ""
+                    ]);
+                });
+                
+                // Создаем книгу Excel
+                const wb = XLSX.utils.book_new();
+                const ws = XLSX.utils.aoa_to_sheet(excelData);
+                
+                // Устанавливаем ширину столбцов (в символах)
+                const colWidths = [
+                    { wch: 40 }, // Название
+                    { wch: 40 }, // Вид нанесения
+                    { wch: 10 }, // Цена
+                    { wch: 50 }  // Изображение
+                ];
+                ws['!cols'] = colWidths;
+                
+                // Добавляем лист в книгу
+                XLSX.utils.book_append_sheet(wb, ws, "Товары");
+                
+                // Формируем имя файла с датой и временем
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const fileName = `товары-${timestamp}.xlsx`;
+                
+                // Экспортируем файл
+                XLSX.writeFile(wb, fileName);
+                
+            } catch (error) {
+                console.error("Ошибка при создании Excel-файла:", error);
+                alert("Не удалось создать Excel-файл: " + error.message);
+            }
+        }
+    </script>
+</body>
+</html>
